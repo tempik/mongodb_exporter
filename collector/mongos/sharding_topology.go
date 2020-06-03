@@ -50,7 +50,7 @@ var (
 		Subsystem: "sharding",
 		Name:      "shard_chunks_total",
 		Help:      "Total number of chunks per shard",
-	}, []string{"shard"})
+	}, []string{"shard", "database"})
 	shardingTopoInfoTotalDatabases = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: Namespace,
 		Subsystem: "sharding",
@@ -67,12 +67,14 @@ var (
 
 type ShardingTopoShardInfo struct {
 	Shard    string `bson:"_id"`
+	Ns       string `bson:"ns"` //TBA
 	Host     string `bson:"host"`
 	Draining bool   `bson:"draining",omitifempty`
 }
 
 type ShardingTopoChunkInfo struct {
-	Shard  string  `bson:"_id"`
+	Shard  string  `bson:"shard"`
+	Ns  string  `bson:"ns"`
 	Chunks float64 `bson:"count"`
 }
 
@@ -128,7 +130,7 @@ func GetTotalChunks(client *mongo.Client) float64 {
 // GetTotalChunksByShard gets total chunks by shard.
 func GetTotalChunksByShard(client *mongo.Client) *[]ShardingTopoChunkInfo {
 	var results []ShardingTopoChunkInfo
-	c, err := client.Database("config").Collection("chunks").Aggregate(context.TODO(), []bson.M{{"$group": bson.M{"_id": "$shard", "count": bson.M{"$sum": 1}}}})
+	c, err := client.Database("config").Collection("chunks").Aggregate(context.TODO(), []bson.M{{"$group": bson.M{"_id":  bson.M{"shard": "$shard", "ns": "$ns"},  "count": bson.M{"$sum": 1}}},  bson.M{"$project": bson.M{"shard":"$_id.shard", "ns":"$_id.ns", "count": "$count"}}})
 	if err != nil {
 		log.Errorf("Failed to execute find query on 'config.chunks': %s.", err)
 		return nil
@@ -141,6 +143,7 @@ func GetTotalChunksByShard(client *mongo.Client) *[]ShardingTopoChunkInfo {
 			log.Error(err)
 			continue
 		}
+		log.Error("NABLYA", results)
 		results = append(results, *e)
 	}
 
@@ -217,10 +220,11 @@ func (status *ShardingTopoStats) Export(ch chan<- prometheus.Metric) {
 	if status.ShardChunks != nil {
 		// set all known shards to zero first so that shards with zero chunks are still displayed properly
 		for _, shard := range *status.Shards {
-			shardingTopoInfoShardChunks.WithLabelValues(shard.Shard).Set(0)
+			shardingTopoInfoShardChunks.WithLabelValues(shard.Shard, shard.Ns).Set(0)
+			// здесь бага - т.к. значение shard.NS пустое - его нет и не может быть в коллекции shards
 		}
 		for _, shard := range *status.ShardChunks {
-			shardingTopoInfoShardChunks.WithLabelValues(shard.Shard).Set(shard.Chunks)
+			shardingTopoInfoShardChunks.WithLabelValues(shard.Shard, shard.Ns).Set(shard.Chunks)
 		}
 	}
 
